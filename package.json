@@ -1,0 +1,35 @@
+{
+  "name": "pulse-global-intelligence-monitor",
+  "version": "2.0.0",
+  "description": "Real-time global situation awareness and intelligence monitoring dashboard",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve . -l 3000"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/pulse-monitor.git"
+  },
+  "keywords": [
+    "osint",
+    "intelligence",
+    "monitoring",
+    "dashboard",
+    "geopolitics",
+    "defcon",
+    "polymarket",
+    "global-affairs",
+    "real-time",
+    "situation-awareness"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/yourusername/pulse-monitor/issues"
+  },
+  "homepage": "https://pulse-monitor.netlify.app",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
