@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PULSE | Global Intelligence Monitor</title>
+    <meta name="description" content="Real-time global situation awareness dashboard">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Twitter Widget JS -->
+    <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'pulse': {
+                            'black': '#030506',
+                            'darker': '#070a0d',
+                            'dark': '#0a0e12',
+                            'panel': '#0d1117',
+                            'border': '#1b2430',
+                            'text': '#e6edf3',
+                            'text-secondary': '#8b949e',
+                            'text-muted': '#484f58',
+                            'green': '#00ff88',
+                            'cyan': '#00d4ff',
+                            'blue': '#3b82f6',
+                            'yellow': '#fbbf24',
+                            'orange': '#f97316',
+                            'red': '#ef4444',
+                            'critical': '#ff2d55',
+                            'elevated': '#ff9500',
+                            'watch': '#ffcc00',
+                            'monitor': '#34c759',
+                        }
+                    },
+                    fontFamily: {
+                        'mono': ['JetBrains Mono', 'monospace'],
+                        'display': ['Space Grotesk', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+                        'ticker': 'ticker 60s linear infinite',
+                    },
+                    keyframes: {
+                        'pulse-glow': {
+                            '0%, 100%': { opacity: '1' },
+                            '50%': { opacity: '0.5' },
+                        },
+                        'ticker': {
+                            '0%': { transform: 'translateX(0)' },
+                            '100%': { transform: 'translateX(-50%)' },
+                        },
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        * { scrollbar-width: thin; scrollbar-color: #1b2430 #0a0e12; }
+        *::-webkit-scrollbar { width: 6px; }
+        *::-webkit-scrollbar-track { background: #0a0e12; }
+        *::-webkit-scrollbar-thumb { background: #1b2430; border-radius: 3px; }
+        
+        /* DARK MAP - No filter needed, using dark tiles */
+        .leaflet-container { 
+            background: #0a0e12 !important; 
+            font-family: 'JetBrains Mono', monospace; 
+        }
+        .leaflet-control-zoom { display: none; }
+        .leaflet-popup-content-wrapper { 
+            background: #0d1117 !important; 
+            border: 1px solid #00ff88 !important; 
+            border-radius: 8px !important; 
+            color: #e6edf3 !important; 
+            box-shadow: 0 0 30px rgba(0, 255, 136, 0.4) !important;
+        }
+        .leaflet-popup-tip { background: #0d1117 !important; border: 1px solid #00ff88; }
+        .leaflet-popup-content { margin: 12px !important; }
+        
+        .grid-overlay {
+            background-image: linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+        
+        .text-glow { text-shadow: 0 0 20px rgba(0, 255, 136, 0.6); }
+        
+        .threat-bar {
+            background: linear-gradient(90deg, #00ff88 0%, #34c759 20%, #ffcc00 40%, #ff9500 60%, #ef4444 80%, #ff2d55 100%);
+        }
+        
+        .feed-item { border-left: 3px solid transparent; transition: all 0.2s ease; }
+        .feed-item:hover { background: rgba(0, 255, 136, 0.08); border-left-color: #00ff88; }
+        .feed-item.critical { border-left-color: #ff2d55; background: rgba(255, 45, 85, 0.05); }
+        .feed-item.elevated { border-left-color: #ff9500; }
+        .feed-item.watch { border-left-color: #ffcc00; }
+        
+        .loading-bar { animation: loading 2.5s ease-out forwards; }
+        @keyframes loading { 0% { width: 0%; } 100% { width: 100%; } }
+        
+        /* Twitter embed dark theme override */
+        .twitter-timeline { border-radius: 8px !important; }
+        
+        @keyframes pulse-ring {
+            0% { transform: scale(1); opacity: 1; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .pulse-ring { animation: pulse-ring 2s ease-out infinite; }
+    </style>
+</head>
+<body class="bg-pulse-black text-pulse-text font-mono antialiased">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        const CONFIG = {
+            DEFCON_LEVEL: 3,
+            NEWS_UPDATE: 120000,
+            POLYMARKET_UPDATE: 60000,
+        };
+
+        const DEFCON_INFO = {
+            1: { name: 'COCKED PISTOL', desc: 'Nuclear war imminent', color: '#ff2d55' },
+            2: { name: 'FAST PACE', desc: 'Next step to nuclear war', color: '#ff3b30' },
+            3: { name: 'ROUND HOUSE', desc: 'Air Force ready in 15 min', color: '#ff9500' },
+            4: { name: 'DOUBLE TAKE', desc: 'Above normal readiness', color: '#5ac8fa' },
+            5: { name: 'FADE OUT', desc: 'Normal readiness', color: '#34c759' },
+        };
+
+        const THREAT_ZONES = [
+            { name: 'KYIV', country: 'Ukraine', coords: [50.45, 30.52], type: 'critical', population: '2.9M', 
+              intel: 'Active war zone. Russian strikes on energy. Day 1,424+ of conflict. State of emergency declared.', 
+              polymarket: 'Ceasefire Jan 31: ~3%' },
+            { name: 'KHARKIV', country: 'Ukraine', coords: [49.99, 36.23], type: 'critical', population: '1.4M',
+              intel: 'Frontline city under constant bombardment. 5 missile strikes Jan 16.',
+              polymarket: 'Russian capture: ~8%' },
+            { name: 'TEHRAN', country: 'Iran', coords: [35.69, 51.39], type: 'critical', population: '9.0M',
+              intel: 'Mass protests Day 21+. Est. 2,500-12,000 killed. Internet blackout. Executions ordered.',
+              polymarket: 'Regime fall Mar: ~14%' },
+            { name: 'GAZA', country: 'Palestine', coords: [31.52, 34.45], type: 'critical', population: '2.0M',
+              intel: 'Humanitarian crisis. Active military operations. Aid access severely restricted.',
+              polymarket: 'Ceasefire: ~12%' },
+            { name: 'BEIRUT', country: 'Lebanon', coords: [33.89, 35.50], type: 'critical', population: '2.4M',
+              intel: 'Hezbollah tensions elevated. Economic collapse. Regional spillover risk high.',
+              polymarket: 'Israel strikes: ~6%' },
+            { name: 'TAIPEI', country: 'Taiwan', coords: [25.03, 121.57], type: 'elevated', population: '2.6M',
+              intel: 'China military pressure continues. INDOPACOM at DEFCON 2. US commitment reaffirmed.',
+              polymarket: 'China invades 2026: ~13%' },
+            { name: 'CARACAS', country: 'Venezuela', coords: [10.48, -66.90], type: 'elevated', population: '2.9M',
+              intel: 'US seized Olina tanker. SOUTHCOM at DEFCON 2. Political instability high.',
+              polymarket: 'Maduro removal: ~28%' },
+            { name: 'PYONGYANG', country: 'North Korea', coords: [39.03, 125.75], type: 'elevated', population: '3.0M',
+              intel: 'Nuclear program advances. Missile testing continues. Regional tensions elevated.',
+              polymarket: 'Nuclear test 2026: ~15%' },
+            { name: 'MOSCOW', country: 'Russia', coords: [55.76, 37.62], type: 'watch', population: '12.5M',
+              intel: 'Directing Ukraine ops. Oreshnik missile near NATO. Western sanctions tightening.',
+              polymarket: 'Ceasefire 2026: ~42%' },
+            { name: 'BEIJING', country: 'China', coords: [39.90, 116.41], type: 'watch', population: '21.5M',
+              intel: 'Taiwan pressure. Tech competition with US. Economic challenges mount.',
+              polymarket: 'Trade war: Elevated' },
+            { name: 'DAMASCUS', country: 'Syria', coords: [33.51, 36.29], type: 'watch', population: '2.0M',
+              intel: 'CENTCOM killed Al-Qaeda leader Jan 16. Regional instability continues.',
+              polymarket: 'Stability: Low' },
+            { name: 'WASHINGTON', country: 'USA', coords: [38.91, -77.04], type: 'monitor', population: '700K',
+              intel: 'Trump admin policy shifts. Iran/Venezuela focus. Shutdown risk.',
+              polymarket: 'Shutdown: ~24%' },
+        ];
+
+        // Utility functions
+        const formatTime = () => new Date().toLocaleString('en-US', {
+            timeZone: 'UTC', weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        }) + ' UTC';
+
+        const formatTimeShort = () => new Date().toLocaleTimeString('en-US', {
+            timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false,
+        });
+
+        const getTimeAgo = (date) => {
+            const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+            if (seconds < 60) return 'now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+            return `${Math.floor(seconds / 86400)}d`;
+        };
+
+        const getNewsLevel = (text) => {
+            const t = text.toLowerCase();
+            if (/killed|dead|attack|strike|bomb|war|crisis|massacre|death|missile/.test(t)) return 'critical';
+            if (/military|troops|tension|conflict|sanction|threat|nuclear|protest/.test(t)) return 'elevated';
+            if (/warning|concern|risk|unrest|diplomat/.test(t)) return 'watch';
+            return 'monitor';
+        };
+
+        // News fetching with multiple fallback APIs
+        const fetchNews = async (feedUrl, sourceName) => {
+            const apis = [
+                `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`,
+            ];
+            
+            // Try rss2json first
+            try {
+                const res = await fetch(apis[0]);
+                const data = await res.json();
+                if (data.status === 'ok' && data.items?.length > 0) {
+                    return data.items.slice(0, 8).map(item => ({
+                        time: getTimeAgo(item.pubDate),
+                        source: sourceName,
+                        text: item.title?.replace(/<[^>]*>/g, '').trim(),
+                        link: item.link,
+                        level: getNewsLevel(item.title || ''),
+                    }));
+                }
+            } catch (e) { console.log('rss2json failed, trying fallback'); }
+            
+            // Try allorigins fallback
+            try {
+                const res = await fetch(apis[1]);
+                const xml = await res.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(xml, 'text/xml');
+                const items = doc.querySelectorAll('item');
+                return Array.from(items).slice(0, 8).map(item => ({
+                    time: getTimeAgo(item.querySelector('pubDate')?.textContent || new Date()),
+                    source: sourceName,
+                    text: item.querySelector('title')?.textContent?.replace(/<[^>]*>/g, '').trim() || '',
+                    link: item.querySelector('link')?.textContent || '',
+                    level: getNewsLevel(item.querySelector('title')?.textContent || ''),
+                }));
+            } catch (e) { console.log('allorigins failed'); }
+            
+            return [];
+        };
+
+        // Polymarket data hook
+        const usePolymarket = () => {
+            const [data, setData] = useState([
+                { title: 'Russia-Ukraine Ceasefire Jan 31?', odds: 3, volume: '$16M' },
+                { title: 'Russia-Ukraine Ceasefire 2026?', odds: 42, volume: '$7M' },
+                { title: 'Israel Strikes Iran Jan 31?', odds: 19, volume: '$11M' },
+                { title: 'Iran Regime Fall Jan 31?', odds: 3, volume: '$7M' },
+                { title: 'Iran Regime Fall Mar 31?', odds: 14, volume: '$2M' },
+                { title: 'Khamenei Out Mar 31?', odds: 28, volume: '$6M' },
+                { title: 'China Invades Taiwan 2026?', odds: 13, volume: '$7M' },
+                { title: 'US Gov Shutdown Jan 31?', odds: 24, volume: '$2M' },
+                { title: 'Fed Holds Rates Jan?', odds: 81, volume: '$385M' },
+            ]);
+            const [lastUpdate, setLastUpdate] = useState(new Date());
+
+            useEffect(() => {
+                const fetchPolymarket = async () => {
+                    try {
+                        const res = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=100');
+                        const markets = await res.json();
+                        const keywords = ['ukraine', 'russia', 'iran', 'china', 'taiwan', 'israel', 'fed', 'ceasefire', 'war', 'regime', 'shutdown'];
+                        const filtered = markets.filter(m => keywords.some(k => m.question?.toLowerCase().includes(k))).slice(0, 10);
+                        if (filtered.length > 0) {
+                            setData(filtered.map(m => ({
+                                title: m.question,
+                                odds: Math.round(parseFloat(m.outcomePrices?.[0] || 0) * 100),
+                                volume: `$${(parseFloat(m.volume || 0) / 1e6).toFixed(1)}M`,
+                            })));
+                            setLastUpdate(new Date());
+                        }
+                    } catch (e) { console.log('Polymarket fetch error'); }
+                };
+                fetchPolymarket();
+                const interval = setInterval(fetchPolymarket, CONFIG.POLYMARKET_UPDATE);
+                return () => clearInterval(interval);
+            }, []);
+
+            return { data, lastUpdate };
+        };
+
+        // News hook
+        const useNews = (feedUrl, sourceName) => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [lastUpdate, setLastUpdate] = useState(null);
+
+            const fetch_ = useCallback(async () => {
+                const news = await fetchNews(feedUrl, sourceName);
+                if (news.length > 0) {
+                    setData(news);
+                    setLastUpdate(new Date());
+                }
+                setLoading(false);
+            }, [feedUrl, sourceName]);
+
+            useEffect(() => {
+                fetch_();
+                const interval = setInterval(fetch_, CONFIG.NEWS_UPDATE);
+                return () => clearInterval(interval);
+            }, [fetch_]);
+
+            return { data, loading, lastUpdate, refetch: fetch_ };
+        };
+
+        // ==================== COMPONENTS ====================
+        
+        const LoadingScreen = ({ onComplete }) => {
+            const [msg, setMsg] = useState('INITIALIZING...');
+            const done = useRef(false);
+            
+            useEffect(() => {
+                const msgs = ['INITIALIZING...', 'CONNECTING FEEDS...', 'LOADING INTEL...', 'SYSTEM READY'];
+                let i = 0;
+                const t1 = setInterval(() => { if (++i < msgs.length) setMsg(msgs[i]); }, 600);
+                const t2 = setTimeout(() => { if (!done.current) { done.current = true; onComplete(); } }, 2600);
+                return () => { clearInterval(t1); clearTimeout(t2); };
+            }, [onComplete]);
+            
+            return (
+                <div className="fixed inset-0 bg-pulse-black z-50 flex flex-col items-center justify-center">
+                    <div className="absolute inset-0 grid-overlay opacity-40"></div>
+                    <h1 className="font-display text-6xl font-bold tracking-[0.3em] text-pulse-green text-glow mb-2">PULSE</h1>
+                    <p className="font-mono text-xs text-pulse-text-muted tracking-widest mb-12">GLOBAL INTELLIGENCE MONITOR</p>
+                    <div className="w-64 h-1 bg-pulse-border rounded-full overflow-hidden mb-4">
+                        <div className="h-full bg-pulse-green loading-bar"></div>
+                    </div>
+                    <p className="font-mono text-xs text-pulse-green">{msg}</p>
+                </div>
+            );
+        };
+        
+        const Header = ({ time }) => (
+            <header className="bg-pulse-panel border-b border-pulse-border sticky top-0 z-40">
+                <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-pulse-green animate-pulse"></div>
+                            <h1 className="font-display text-xl font-bold tracking-widest text-pulse-green">PULSE</h1>
+                        </div>
+                        <div className="hidden md:flex items-center gap-2 px-2 py-1 bg-pulse-green/10 border border-pulse-green/30 rounded">
+                            <div className="w-1.5 h-1.5 rounded-full bg-pulse-green animate-pulse"></div>
+                            <span className="font-mono text-xs text-pulse-green">LIVE</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <span className="hidden sm:block font-mono text-sm text-pulse-text-secondary">{time}</span>
+                        <span className="font-mono text-xs text-pulse-text-muted px-2 py-1 bg-pulse-dark rounded">OSINT</span>
+                    </div>
+                </div>
+            </header>
+        );
+        
+        const DefconBar = ({ level = 3 }) => {
+            const info = DEFCON_INFO[level];
+            return (
+                <div className="bg-pulse-darker border-b border-pulse-border">
+                    <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6 px-4 py-3">
+                        <span className="font-mono text-xs text-pulse-text-muted">DEFCON (OSINT)</span>
+                        <div className="flex gap-1">
+                            {[1,2,3,4,5].map(l => (
+                                <div key={l} className={`w-8 h-8 flex items-center justify-center font-mono text-sm font-bold rounded ${l === level ? 'animate-pulse-glow' : 'opacity-30'}`}
+                                    style={{ backgroundColor: l === level ? `${DEFCON_INFO[l].color}22` : 'transparent', color: DEFCON_INFO[l].color, border: l === level ? `2px solid ${DEFCON_INFO[l].color}` : '1px solid transparent' }}>
+                                    {l}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="text-center">
+                            <div className="font-mono text-sm font-bold" style={{ color: info.color }}>{info.name}</div>
+                            <div className="font-mono text-xs text-pulse-text-muted">{info.desc}</div>
+                        </div>
+                        <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-pulse-dark rounded">
+                            <span className="font-mono text-xs text-pulse-text-muted">THREAT</span>
+                            <div className="w-16 h-2 threat-bar rounded-full"></div>
+                            <span className="font-mono text-xs font-bold text-pulse-orange">55</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AlertTicker = () => {
+            const alerts = [
+                '🔴 IRAN: Protests Day 21+ • Est. 2,500-12,000 killed • Internet blackout • Executions ordered',
+                '🔴 UKRAINE: Day 1,424 • Energy emergency declared • Russian Oreshnik strikes near NATO',
+                '🔴 GAZA: Humanitarian crisis • Aid restricted • Regional escalation risk',
+                '🟠 INDOPACOM at DEFCON 2 • Taiwan Strait tensions • China exercises',
+                '🟠 SOUTHCOM at DEFCON 2 • Venezuela instability • US seized Olina tanker',
+            ];
+            return (
+                <div className="bg-pulse-critical/10 border-y border-pulse-critical/30 overflow-hidden">
+                    <div className="flex animate-ticker whitespace-nowrap py-2">
+                        {[...alerts, ...alerts].map((a, i) => <span key={i} className="font-mono text-xs text-pulse-critical mx-8">{a}</span>)}
+                    </div>
+                </div>
+            );
+        };
+        
+        const Panel = ({ title, badge, badgeColor = 'cyan', children, className = '' }) => (
+            <div className={`bg-pulse-panel border border-pulse-border rounded-lg overflow-hidden ${className}`}>
+                <div className="flex items-center justify-between px-4 py-2 bg-pulse-darker border-b border-pulse-border">
+                    <span className="font-mono text-sm font-semibold">{title}</span>
+                    {badge && <span className={`px-2 py-0.5 font-mono text-xs font-bold rounded`} style={{ backgroundColor: badgeColor === 'red' ? '#ef444433' : '#00d4ff22', color: badgeColor === 'red' ? '#ef4444' : '#00d4ff' }}>{badge}</span>}
+                </div>
+                <div className="p-3 max-h-[500px] overflow-y-auto">{children}</div>
+            </div>
+        );
+        
+        // FIXED MAP - Using CartoDB Dark Matter (already dark)
+        const GlobalMap = () => {
+            const mapRef = useRef(null);
+            const map = useRef(null);
+            
+            useEffect(() => {
+                if (!mapRef.current || map.current) return;
+                
+                map.current = L.map(mapRef.current, { 
+                    center: [25, 20], zoom: 2, minZoom: 2, maxZoom: 8, 
+                    zoomControl: false, attributionControl: false 
+                });
+                
+                // CartoDB Dark Matter - properly dark tiles
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map.current);
+                
+                const colors = { critical: '#ff2d55', elevated: '#ff9500', watch: '#ffcc00', monitor: '#34c759' };
+                
+                THREAT_ZONES.forEach(z => {
+                    // Outer pulse ring
+                    const ring = L.circleMarker(z.coords, {
+                        radius: z.type === 'critical' ? 20 : 14,
+                        fillColor: colors[z.type],
+                        color: 'transparent',
+                        fillOpacity: 0.15,
+                        className: z.type === 'critical' ? 'pulse-ring' : '',
+                    }).addTo(map.current);
+                    
+                    // Main marker
+                    L.circleMarker(z.coords, {
+                        radius: z.type === 'critical' ? 8 : z.type === 'elevated' ? 6 : 4,
+                        fillColor: colors[z.type],
+                        color: '#fff',
+                        weight: 2,
+                        fillOpacity: 1,
+                    }).addTo(map.current).bindPopup(`
+                        <div style="font-family: JetBrains Mono, monospace; min-width: 200px;">
+                            <div style="font-size: 15px; font-weight: bold; color: ${colors[z.type]};">${z.name}</div>
+                            <div style="font-size: 11px; color: #8b949e; margin: 4px 0;">${z.country} • ${z.population}</div>
+                            <div style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: ${colors[z.type]}33; color: ${colors[z.type]};">${z.type.toUpperCase()}</div>
+                            <p style="font-size: 11px; color: #e6edf3; margin: 8px 0; line-height: 1.4;">${z.intel}</p>
+                            <div style="background: #0a0e12; padding: 6px; border-radius: 4px; margin-top: 8px;">
+                                <div style="font-size: 9px; color: #484f58;">POLYMARKET</div>
+                                <div style="font-size: 11px; color: #00d4ff; font-weight: 600;">${z.polymarket}</div>
+                            </div>
+                        </div>
+                    `, { maxWidth: 280 });
+                });
+                
+                return () => { map.current?.remove(); map.current = null; };
+            }, []);
+            
+            return (
+                <div className="relative h-[400px] bg-pulse-darker rounded-lg overflow-hidden border border-pulse-border">
+                    <div ref={mapRef} className="absolute inset-0"></div>
+                    <div className="absolute inset-0 pointer-events-none grid-overlay opacity-20"></div>
+                    
+                    <div className="absolute top-3 left-3 z-[1000] bg-pulse-panel/95 border border-pulse-green/40 rounded p-2.5">
+                        <div className="font-mono text-xs text-pulse-green font-semibold mb-2 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-pulse-green rounded-full animate-pulse"></span>TRACKING
+                        </div>
+                        <div className="space-y-0.5 font-mono text-xs">
+                            <div className="flex justify-between gap-4"><span className="text-pulse-text-muted">CRITICAL</span><span className="text-pulse-critical font-bold">{THREAT_ZONES.filter(z => z.type === 'critical').length}</span></div>
+                            <div className="flex justify-between gap-4"><span className="text-pulse-text-muted">ELEVATED</span><span className="text-pulse-elevated font-bold">{THREAT_ZONES.filter(z => z.type === 'elevated').length}</span></div>
+                            <div className="flex justify-between gap-4"><span className="text-pulse-text-muted">TOTAL</span><span className="text-pulse-green font-bold">{THREAT_ZONES.length}</span></div>
+                        </div>
+                    </div>
+                    
+                    <div className="absolute bottom-3 left-3 z-[1000] bg-pulse-panel/95 border border-pulse-border rounded p-2.5">
+                        <div className="flex gap-3 font-mono text-xs">
+                            {[['critical', '#ff2d55'], ['elevated', '#ff9500'], ['watch', '#ffcc00'], ['monitor', '#34c759']].map(([t, c]) => (
+                                <div key={t} className="flex items-center gap-1">
+                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c }}></div>
+                                    <span className="text-pulse-text-muted capitalize">{t}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const FeedItem = ({ item }) => (
+            <div className={`feed-item ${item.level} pl-3 py-2 rounded`}>
+                <div className="flex gap-2">
+                    <span className="font-mono text-xs text-pulse-text-muted w-8 flex-shrink-0">{item.time}</span>
+                    <div className="flex-1 min-w-0">
+                        <span className="font-mono text-xs text-pulse-cyan font-semibold">{item.source}</span>
+                        {item.link ? (
+                            <a href={item.link} target="_blank" rel="noopener noreferrer" className="block font-mono text-xs text-pulse-text-secondary mt-0.5 leading-relaxed hover:text-pulse-green">{item.text}</a>
+                        ) : (
+                            <p className="font-mono text-xs text-pulse-text-secondary mt-0.5 leading-relaxed">{item.text}</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+        
+        const PolymarketPanel = () => {
+            const { data, lastUpdate } = usePolymarket();
+            return (
+                <Panel title="📊 POLYMARKET" badge="LIVE">
+                    <div className="space-y-2">
+                        {data.map((p, i) => {
+                            const color = p.odds >= 50 ? '#ef4444' : p.odds >= 25 ? '#f97316' : '#34c759';
+                            return (
+                                <div key={i} className="bg-pulse-dark rounded p-2.5 border border-pulse-border/50">
+                                    <div className="flex justify-between items-center mb-1.5">
+                                        <span className="font-mono text-xs text-pulse-text flex-1 pr-2">{p.title}</span>
+                                        <span className="font-mono text-lg font-bold" style={{ color }}>{p.odds}%</span>
+                                    </div>
+                                    <div className="h-1.5 bg-pulse-border rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full" style={{ width: `${p.odds}%`, backgroundColor: color }}></div>
+                                    </div>
+                                    <div className="font-mono text-xs text-pulse-text-muted mt-1">Vol: {p.volume}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <a href="https://polymarket.com" target="_blank" className="block mt-3 pt-2 border-t border-pulse-border font-mono text-xs text-pulse-cyan hover:underline">All markets →</a>
+                </Panel>
+            );
+        };
+        
+        const NewsPanel = ({ title, feedUrl, sourceName }) => {
+            const { data, loading, refetch } = useNews(feedUrl, sourceName);
+            return (
+                <Panel title={title} badge={loading ? '...' : 'LIVE'}>
+                    {data.length > 0 ? (
+                        <div className="space-y-1">{data.map((item, i) => <FeedItem key={i} item={item} />)}</div>
+                    ) : (
+                        <div className="text-center py-6">
+                            <p className="font-mono text-xs text-pulse-text-muted mb-2">{loading ? 'Loading...' : 'Feed unavailable'}</p>
+                            {!loading && <button onClick={refetch} className="font-mono text-xs text-pulse-cyan hover:underline">Retry</button>}
+                        </div>
+                    )}
+                </Panel>
+            );
+        };
+        
+        const OsintPanel = () => {
+            const data = [
+                { time: 'NOW', source: 'DEFCON', text: 'OSINT Level 3 (ROUND HOUSE). SOUTHCOM/INDOPACOM at Level 2.', level: 'elevated' },
+                { time: '1h', source: 'CENTCOM', text: 'US strike killed Al-Qaeda leader in Syria Jan 16, tied to Dec ambush.', level: 'critical' },
+                { time: '2h', source: 'ISW', text: 'Russia gained 79 sq mi in 4 weeks. Zaporizhzhia front advances.', level: 'critical' },
+                { time: '3h', source: 'HRANA', text: 'Iran protest deaths exceed 2,500. Executions ordered. Day 10 blackout.', level: 'critical' },
+                { time: '4h', source: 'IAEA', text: 'Zaporizhzhia NPP: Localized ceasefire agreed for power repairs.', level: 'elevated' },
+                { time: '6h', source: 'NATO', text: 'Rutte-Zelenskyy call on energy crisis. Support commitment reaffirmed.', level: 'watch' },
+            ];
+            return (
+                <Panel title="📡 OSINT FEED" badge="LIVE" badgeColor="red">
+                    <div className="space-y-1">{data.map((item, i) => <FeedItem key={i} item={item} />)}</div>
+                    <div className="flex gap-3 mt-3 pt-2 border-t border-pulse-border">
+                        <a href="https://defconlevel.com" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">DEFCON →</a>
+                        <a href="https://understandingwar.org" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">ISW →</a>
+                    </div>
+                </Panel>
+            );
+        };
+        
+        // FIXED TWITTER - Embedded timelines that actually show tweets
+        const TwitterPanel = () => {
+            const containerRef = useRef(null);
+            
+            useEffect(() => {
+                // Reload Twitter widgets when component mounts
+                if (window.twttr?.widgets) {
+                    window.twttr.widgets.load(containerRef.current);
+                }
+            }, []);
+            
+            return (
+                <Panel title="𝕏 LIVE OSINT FEED" badge="LIVE" badgeColor="red">
+                    <div ref={containerRef}>
+                        {/* Embedded Twitter List or Timeline */}
+                        <div className="mb-3 bg-pulse-dark rounded overflow-hidden border border-pulse-border">
+                            <a 
+                                className="twitter-timeline" 
+                                data-theme="dark"
+                                data-height="350"
+                                data-chrome="noheader nofooter noborders transparent"
+                                data-tweet-limit="5"
+                                href="https://twitter.com/sentdefender?ref_src=twsrc%5Etfw"
+                            >
+                                Loading @sentdefender...
+                            </a>
+                        </div>
+                        
+                        {/* Second embedded timeline */}
+                        <div className="mb-3 bg-pulse-dark rounded overflow-hidden border border-pulse-border">
+                            <a 
+                                className="twitter-timeline" 
+                                data-theme="dark"
+                                data-height="300"
+                                data-chrome="noheader nofooter noborders transparent"
+                                data-tweet-limit="4"
+                                href="https://twitter.com/IntelCrab?ref_src=twsrc%5Etfw"
+                            >
+                                Loading @IntelCrab...
+                            </a>
+                        </div>
+                        
+                        {/* Quick links */}
+                        <div className="bg-pulse-dark rounded p-2.5 border border-pulse-border">
+                            <div className="font-mono text-xs text-pulse-text-muted mb-2">MORE OSINT</div>
+                            <div className="flex flex-wrap gap-2">
+                                <a href="https://x.com/OSINTdefender" target="_blank" className="px-2 py-1 bg-pulse-panel text-pulse-cyan font-mono text-xs rounded hover:bg-pulse-border">@OSINTdefender</a>
+                                <a href="https://x.com/TheStudyofWar" target="_blank" className="px-2 py-1 bg-pulse-panel text-pulse-cyan font-mono text-xs rounded hover:bg-pulse-border">@TheStudyofWar</a>
+                                <a href="https://x.com/IranIntl_En" target="_blank" className="px-2 py-1 bg-pulse-panel text-pulse-cyan font-mono text-xs rounded hover:bg-pulse-border">@IranIntl_En</a>
+                                <a href="https://x.com/wartranslated" target="_blank" className="px-2 py-1 bg-pulse-panel text-pulse-cyan font-mono text-xs rounded hover:bg-pulse-border">@wartranslated</a>
+                            </div>
+                        </div>
+                        
+                        {/* Live search tags */}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            <a href="https://x.com/search?q=Ukraine%20war&f=live" target="_blank" className="px-2 py-1 bg-pulse-critical/20 text-pulse-critical font-mono text-xs rounded hover:bg-pulse-critical/30">#Ukraine</a>
+                            <a href="https://x.com/search?q=Iran%20protests&f=live" target="_blank" className="px-2 py-1 bg-pulse-critical/20 text-pulse-critical font-mono text-xs rounded hover:bg-pulse-critical/30">#Iran</a>
+                            <a href="https://x.com/search?q=Gaza&f=live" target="_blank" className="px-2 py-1 bg-pulse-elevated/20 text-pulse-elevated font-mono text-xs rounded hover:bg-pulse-elevated/30">#Gaza</a>
+                            <a href="https://x.com/search?q=Taiwan%20China&f=live" target="_blank" className="px-2 py-1 bg-pulse-watch/20 text-pulse-watch font-mono text-xs rounded hover:bg-pulse-watch/30">#Taiwan</a>
+                        </div>
+                    </div>
+                </Panel>
+            );
+        };
+
+        const MarketsPanel = () => {
+            const data = {
+                'S&P 500': { v: '5,996', c: '+0.16%', up: true },
+                'NASDAQ': { v: '19,630', c: '+0.14%', up: true },
+                'VIX': { v: '15.97', c: '-3.34%', up: false },
+                'GOLD': { v: '$2,714', c: '+0.87%', up: true },
+                'OIL': { v: '$77.88', c: '+1.28%', up: true },
+                'BTC': { v: '$103K', c: '+2.34%', up: true },
+            };
+            return (
+                <Panel title="📈 MARKETS" badge="DATA">
+                    <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(data).map(([n, d]) => (
+                            <div key={n} className="bg-pulse-dark rounded p-2.5 border border-pulse-border/50">
+                                <div className="font-mono text-xs text-pulse-text-muted">{n}</div>
+                                <div className="font-mono text-lg font-bold text-pulse-text">{d.v}</div>
+                                <div className="font-mono text-xs font-semibold" style={{ color: d.up ? '#34c759' : '#ef4444' }}>{d.c}</div>
+                            </div>
+                        ))}
+                    </div>
+                </Panel>
+            );
+        };
+        
+        // ==================== APP ====================
+        const App = () => {
+            const [loading, setLoading] = useState(true);
+            const [time, setTime] = useState(formatTime());
+            
+            useEffect(() => {
+                const t = setInterval(() => setTime(formatTime()), 1000);
+                return () => clearInterval(t);
+            }, []);
+            
+            if (loading) return <LoadingScreen onComplete={() => setLoading(false)} />;
+            
+            return (
+                <div className="min-h-screen bg-pulse-black">
+                    <Header time={time} />
+                    <DefconBar level={CONFIG.DEFCON_LEVEL} />
+                    <AlertTicker />
+                    
+                    <main className="p-4 max-w-[1920px] mx-auto">
+                        <section className="mb-5">
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="text-xl">🌍</span>
+                                <h2 className="font-display text-base font-semibold">GLOBAL SITUATION</h2>
+                                <span className="px-2 py-0.5 bg-pulse-green/20 text-pulse-green font-mono text-xs rounded animate-pulse">LIVE</span>
+                            </div>
+                            <GlobalMap />
+                        </section>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                            <div className="space-y-4">
+                                <OsintPanel />
+                                <TwitterPanel />
+                            </div>
+                            <div className="space-y-4">
+                                <NewsPanel title="📰 BBC WORLD" feedUrl="https://feeds.bbci.co.uk/news/world/rss.xml" sourceName="BBC" />
+                                <NewsPanel title="🌐 AL JAZEERA" feedUrl="https://www.aljazeera.com/xml/rss/all.xml" sourceName="AJ" />
+                            </div>
+                            <div className="space-y-4">
+                                <PolymarketPanel />
+                                <MarketsPanel />
+                            </div>
+                        </div>
+                        
+                        <footer className="mt-6 pt-3 border-t border-pulse-border text-center">
+                            <p className="font-mono text-xs text-pulse-text-muted">PULSE v2.3 • OSINT Dashboard • Auto-refresh</p>
+                            <div className="flex justify-center gap-3 mt-1">
+                                <a href="https://defconlevel.com" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">DEFCON</a>
+                                <a href="https://polymarket.com" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">Polymarket</a>
+                                <a href="https://understandingwar.org" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">ISW</a>
+                                <a href="https://liveuamap.com" target="_blank" className="font-mono text-xs text-pulse-cyan hover:underline">LiveUAMap</a>
+                            </div>
+                        </footer>
+                    </main>
+                </div>
+            );
+        };
+        
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
