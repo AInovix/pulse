@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PULSE | Global Intelligence Monitor</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script async src="https://platform.twitter.com/widgets.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'p': {
+                            'black': '#030506', 'darker': '#070a0d', 'dark': '#0a0e12',
+                            'panel': '#0d1117', 'border': '#1b2430', 'text': '#e6edf3',
+                            'muted': '#484f58', 'green': '#00ff88', 'cyan': '#00d4ff',
+                            'orange': '#f97316', 'red': '#ef4444', 'critical': '#ff2d55',
+                            'elevated': '#ff9500', 'watch': '#ffcc00', 'monitor': '#34c759',
+                        }
+                    },
+                    fontFamily: { 'mono': ['JetBrains Mono', 'monospace'], 'display': ['Space Grotesk', 'sans-serif'] },
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        * { scrollbar-width: thin; scrollbar-color: #1b2430 #0a0e12; }
+        .leaflet-container { background: #0a0e12 !important; }
+        .leaflet-control-zoom { display: none; }
+        .leaflet-popup-content-wrapper { background: #0d1117 !important; border: 1px solid #00ff88 !important; border-radius: 8px !important; color: #e6edf3 !important; }
+        .leaflet-popup-tip { background: #0d1117 !important; }
+        .grid-bg { background-image: linear-gradient(rgba(0,255,136,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.03) 1px, transparent 1px); background-size: 40px 40px; }
+        .feed-item { border-left: 3px solid transparent; transition: all 0.15s; }
+        .feed-item:hover { background: rgba(0,255,136,0.05); border-left-color: #00ff88; }
+        .feed-item.critical { border-left-color: #ff2d55; }
+        .feed-item.elevated { border-left-color: #ff9500; }
+        @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .ticker { animation: ticker 45s linear infinite; }
+        @keyframes load { 0% { width: 0; } 100% { width: 100%; } }
+        .load-bar { animation: load 2s ease-out forwards; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulse { animation: pulse 2s infinite; }
+    </style>
+</head>
+<body class="bg-p-black text-p-text font-mono">
+    <!-- LOADING SCREEN - Pure CSS, no React -->
+    <div id="loader" class="fixed inset-0 bg-p-black z-50 flex flex-col items-center justify-center">
+        <div class="absolute inset-0 grid-bg opacity-40"></div>
+        <div class="relative z-10 text-center">
+            <h1 class="font-display text-5xl md:text-6xl font-bold tracking-[0.3em] text-p-green mb-2" style="text-shadow: 0 0 30px rgba(0,255,136,0.5)">PULSE</h1>
+            <p class="text-xs text-p-muted tracking-widest mb-10">GLOBAL INTELLIGENCE MONITOR</p>
+            <div class="w-64 h-1 bg-p-border rounded-full overflow-hidden mb-4">
+                <div class="h-full bg-p-green load-bar"></div>
+            </div>
+            <p class="text-xs text-p-green" id="load-status">INITIALIZING...</p>
+        </div>
+    </div>
+    
+    <div id="root"></div>
+    
+    <script>
+        // Simple loading with vanilla JS - guaranteed to work
+        var loadMsgs = ['INITIALIZING...', 'CONNECTING FEEDS...', 'LOADING DATA...', 'READY'];
+        var loadIdx = 0;
+        var loadInterval = setInterval(function() {
+            loadIdx++;
+            if (loadIdx < loadMsgs.length) {
+                document.getElementById('load-status').textContent = loadMsgs[loadIdx];
+            }
+        }, 500);
+        
+        // Hide loader after 2.5 seconds - no matter what
+        setTimeout(function() {
+            clearInterval(loadInterval);
+            var loader = document.getElementById('loader');
+            if (loader) loader.style.display = 'none';
+        }, 2500);
+    </script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        const DEFCON = { 1: { n: 'COCKED PISTOL', d: 'Nuclear war imminent', c: '#ff2d55' }, 2: { n: 'FAST PACE', d: 'Next step to nuclear war', c: '#ff3b30' }, 3: { n: 'ROUND HOUSE', d: 'Air Force ready 15 min', c: '#ff9500' }, 4: { n: 'DOUBLE TAKE', d: 'Above normal', c: '#5ac8fa' }, 5: { n: 'FADE OUT', d: 'Normal readiness', c: '#34c759' } };
+        
+        const ZONES = [
+            { name: 'KYIV', country: 'Ukraine', coords: [50.45, 30.52], type: 'critical', pop: '2.9M', intel: 'Active war. Russian strikes on energy. Day 1,424+.', pm: 'Ceasefire Jan: ~3%' },
+            { name: 'KHARKIV', country: 'Ukraine', coords: [49.99, 36.23], type: 'critical', pop: '1.4M', intel: 'Frontline. Constant bombardment.', pm: 'Defense: HIGH' },
+            { name: 'TEHRAN', country: 'Iran', coords: [35.69, 51.39], type: 'critical', pop: '9.0M', intel: 'Protests Day 21+. 2,500+ killed. Blackout.', pm: 'Regime fall: ~14%' },
+            { name: 'GAZA', country: 'Palestine', coords: [31.52, 34.45], type: 'critical', pop: '2.0M', intel: 'Humanitarian crisis. Aid restricted.', pm: 'Ceasefire: ~12%' },
+            { name: 'BEIRUT', country: 'Lebanon', coords: [33.89, 35.50], type: 'critical', pop: '2.4M', intel: 'Hezbollah tensions. Economic collapse.', pm: 'Strikes: ~6%' },
+            { name: 'TAIPEI', country: 'Taiwan', coords: [25.03, 121.57], type: 'elevated', pop: '2.6M', intel: 'China pressure. INDOPACOM DEFCON 2.', pm: 'Invasion 2026: ~13%' },
+            { name: 'CARACAS', country: 'Venezuela', coords: [10.48, -66.90], type: 'elevated', pop: '2.9M', intel: 'US ops. SOUTHCOM DEFCON 2.', pm: 'Maduro out: ~28%' },
+            { name: 'PYONGYANG', country: 'N. Korea', coords: [39.03, 125.75], type: 'elevated', pop: '3.0M', intel: 'Nuclear program. Missile tests.', pm: 'Nuke test: ~15%' },
+            { name: 'MOSCOW', country: 'Russia', coords: [55.76, 37.62], type: 'watch', pop: '12.5M', intel: 'Directing Ukraine war. Sanctions.', pm: 'Ceasefire 2026: ~42%' },
+            { name: 'BEIJING', country: 'China', coords: [39.90, 116.41], type: 'watch', pop: '21.5M', intel: 'Taiwan pressure. US competition.', pm: 'Trade war: HIGH' },
+            { name: 'DAMASCUS', country: 'Syria', coords: [33.51, 36.29], type: 'watch', pop: '2.0M', intel: 'CENTCOM ops. Al-Qaeda leader killed.', pm: 'Stability: LOW' },
+            { name: 'WASHINGTON', country: 'USA', coords: [38.91, -77.04], type: 'monitor', pop: '700K', intel: 'Policy shifts. Iran/Venezuela focus.', pm: 'Shutdown: ~24%' },
+        ];
+
+        const fmtTime = () => new Date().toLocaleString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) + ' UTC';
+        const timeAgo = d => { const s = Math.floor((Date.now() - new Date(d)) / 1000); return s < 60 ? 'now' : s < 3600 ? Math.floor(s/60) + 'm' : s < 86400 ? Math.floor(s/3600) + 'h' : Math.floor(s/86400) + 'd'; };
+        const newsLevel = t => { const l = t.toLowerCase(); return /killed|dead|attack|strike|war|crisis|missile/.test(l) ? 'critical' : /military|troops|tension|nuclear|protest/.test(l) ? 'elevated' : 'watch'; };
+
+        // Fetch news from RSS
+        const useNews = (url, src) => {
+            const [items, setItems] = useState([]);
+            const [loading, setLoading] = useState(true);
+            
+            useEffect(() => {
+                const load = async () => {
+                    try {
+                        const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`);
+                        const d = await r.json();
+                        if (d.status === 'ok' && d.items) {
+                            setItems(d.items.slice(0, 8).map(i => ({
+                                time: timeAgo(i.pubDate), src, text: i.title?.replace(/<[^>]*>/g, ''), link: i.link, level: newsLevel(i.title || '')
+                            })));
+                        }
+                    } catch (e) { console.log('News fetch error'); }
+                    setLoading(false);
+                };
+                load();
+                const t = setInterval(load, 120000);
+                return () => clearInterval(t);
+            }, [url, src]);
+            
+            return { items, loading };
+        };
+
+        // Fetch Polymarket
+        const usePolymarket = () => {
+            const [data, setData] = useState([
+                { q: 'Russia-Ukraine Ceasefire Jan 31?', p: 3, v: '$16M' },
+                { q: 'Russia-Ukraine Ceasefire 2026?', p: 42, v: '$7M' },
+                { q: 'Israel Strikes Iran Jan 31?', p: 19, v: '$11M' },
+                { q: 'Iran Regime Fall Jan 31?', p: 3, v: '$7M' },
+                { q: 'Iran Regime Fall Mar 31?', p: 14, v: '$2M' },
+                { q: 'Khamenei Out Mar 31?', p: 28, v: '$6M' },
+                { q: 'China Invades Taiwan 2026?', p: 13, v: '$7M' },
+                { q: 'US Gov Shutdown Jan 31?', p: 24, v: '$2M' },
+                { q: 'Fed Holds Rates Jan?', p: 81, v: '$385M' },
+            ]);
+            
+            useEffect(() => {
+                const load = async () => {
+                    try {
+                        const r = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=100');
+                        const m = await r.json();
+                        const kw = ['ukraine', 'russia', 'iran', 'china', 'taiwan', 'israel', 'fed', 'ceasefire', 'regime', 'shutdown'];
+                        const f = m.filter(x => kw.some(k => x.question?.toLowerCase().includes(k))).slice(0, 10);
+                        if (f.length > 0) setData(f.map(x => ({ q: x.question, p: Math.round(parseFloat(x.outcomePrices?.[0] || 0) * 100), v: `$${(parseFloat(x.volume || 0) / 1e6).toFixed(1)}M` })));
+                    } catch (e) {}
+                };
+                load();
+                const t = setInterval(load, 60000);
+                return () => clearInterval(t);
+            }, []);
+            
+            return data;
+        };
+
+        // Components
+        const Header = ({ time }) => (
+            <header className="bg-p-panel border-b border-p-border sticky top-0 z-40">
+                <div className="flex items-center justify-between px-4 py-2">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-p-green pulse"></div>
+                            <span className="font-display text-lg font-bold tracking-widest text-p-green">PULSE</span>
+                        </div>
+                        <span className="hidden md:inline px-2 py-0.5 bg-p-green/10 border border-p-green/30 rounded text-xs text-p-green">LIVE</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="hidden sm:inline text-sm text-p-muted">{time}</span>
+                        <span className="text-xs text-p-muted px-2 py-0.5 bg-p-dark rounded">OSINT</span>
+                    </div>
+                </div>
+            </header>
+        );
+
+        const DefconBar = () => {
+            const lvl = 3, info = DEFCON[lvl];
+            return (
+                <div className="bg-p-darker border-b border-p-border py-2">
+                    <div className="flex flex-wrap items-center justify-center gap-3 md:gap-6 px-4">
+                        <span className="text-xs text-p-muted">DEFCON (OSINT)</span>
+                        <div className="flex gap-1">
+                            {[1,2,3,4,5].map(l => (
+                                <div key={l} className={`w-7 h-7 flex items-center justify-center text-xs font-bold rounded ${l === lvl ? 'pulse' : 'opacity-30'}`}
+                                    style={{ background: l === lvl ? DEFCON[l].c + '22' : 'transparent', color: DEFCON[l].c, border: l === lvl ? `2px solid ${DEFCON[l].c}` : 'none' }}>{l}</div>
+                            ))}
+                        </div>
+                        <div className="text-center">
+                            <div className="text-sm font-bold" style={{ color: info.c }}>{info.n}</div>
+                            <div className="text-xs text-p-muted">{info.d}</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Ticker = () => {
+            const alerts = ['🔴 IRAN: Protests Day 21+ • 2,500+ killed • Blackout', '🔴 UKRAINE: Day 1,424 • Energy emergency • Russian strikes', '🔴 GAZA: Humanitarian crisis • Aid blocked', '🟠 INDOPACOM/SOUTHCOM at DEFCON 2'];
+            return (
+                <div className="bg-p-critical/10 border-y border-p-critical/30 overflow-hidden">
+                    <div className="ticker whitespace-nowrap py-1.5">
+                        {[...alerts, ...alerts].map((a, i) => <span key={i} className="text-xs text-p-critical mx-6">{a}</span>)}
+                    </div>
+                </div>
+            );
+        };
+
+        const Panel = ({ title, badge, color = 'cyan', children }) => (
+            <div className="bg-p-panel border border-p-border rounded-lg overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 bg-p-darker border-b border-p-border">
+                    <span className="text-sm font-semibold">{title}</span>
+                    {badge && <span className="px-2 py-0.5 text-xs font-bold rounded" style={{ background: color === 'red' ? '#ef444433' : '#00d4ff22', color: color === 'red' ? '#ef4444' : '#00d4ff' }}>{badge}</span>}
+                </div>
+                <div className="p-3 max-h-[480px] overflow-y-auto">{children}</div>
+            </div>
+        );
+
+        const Map = () => {
+            const ref = useRef(null), map = useRef(null);
+            useEffect(() => {
+                if (!ref.current || map.current) return;
+                map.current = L.map(ref.current, { center: [25, 20], zoom: 2, minZoom: 2, maxZoom: 8, zoomControl: false, attributionControl: false });
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map.current);
+                const colors = { critical: '#ff2d55', elevated: '#ff9500', watch: '#ffcc00', monitor: '#34c759' };
+                ZONES.forEach(z => {
+                    L.circleMarker(z.coords, { radius: z.type === 'critical' ? 18 : 12, fillColor: colors[z.type], color: 'transparent', fillOpacity: 0.2 }).addTo(map.current);
+                    L.circleMarker(z.coords, { radius: z.type === 'critical' ? 7 : 5, fillColor: colors[z.type], color: '#fff', weight: 2, fillOpacity: 1 })
+                        .addTo(map.current)
+                        .bindPopup(`<div style="font-family:JetBrains Mono;min-width:180px"><div style="font-size:14px;font-weight:bold;color:${colors[z.type]}">${z.name}</div><div style="font-size:10px;color:#8b949e;margin:4px 0">${z.country} • ${z.pop}</div><div style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;background:${colors[z.type]}33;color:${colors[z.type]}">${z.type.toUpperCase()}</div><p style="font-size:10px;color:#e6edf3;margin:8px 0">${z.intel}</p><div style="background:#0a0e12;padding:6px;border-radius:4px"><div style="font-size:8px;color:#484f58">POLYMARKET</div><div style="font-size:10px;color:#00d4ff;font-weight:600">${z.pm}</div></div></div>`);
+                });
+                return () => { map.current?.remove(); map.current = null; };
+            }, []);
+            return (
+                <div className="relative h-[380px] bg-p-darker rounded-lg overflow-hidden border border-p-border">
+                    <div ref={ref} className="absolute inset-0"></div>
+                    <div className="absolute top-3 left-3 z-[1000] bg-p-panel/95 border border-p-green/30 rounded p-2">
+                        <div className="text-xs text-p-green font-semibold mb-1.5 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-p-green rounded-full pulse"></span>TRACKING</div>
+                        <div className="space-y-0.5 text-xs">
+                            <div className="flex justify-between gap-4"><span className="text-p-muted">CRITICAL</span><span className="text-p-critical font-bold">{ZONES.filter(z => z.type === 'critical').length}</span></div>
+                            <div className="flex justify-between gap-4"><span className="text-p-muted">ELEVATED</span><span className="text-p-elevated font-bold">{ZONES.filter(z => z.type === 'elevated').length}</span></div>
+                            <div className="flex justify-between gap-4"><span className="text-p-muted">TOTAL</span><span className="text-p-green font-bold">{ZONES.length}</span></div>
+                        </div>
+                    </div>
+                    <div className="absolute bottom-3 left-3 z-[1000] bg-p-panel/95 border border-p-border rounded p-2 flex gap-3 text-xs">
+                        {[['critical','#ff2d55'],['elevated','#ff9500'],['watch','#ffcc00'],['monitor','#34c759']].map(([t,c]) => (
+                            <div key={t} className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:c}}></div><span className="text-p-muted capitalize">{t}</span></div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const FeedItem = ({ item }) => (
+            <div className={`feed-item ${item.level} pl-2 py-1.5 rounded`}>
+                <div className="flex gap-2">
+                    <span className="text-xs text-p-muted w-7 shrink-0">{item.time}</span>
+                    <div className="min-w-0">
+                        <span className="text-xs text-p-cyan font-semibold">{item.src}</span>
+                        {item.link ? <a href={item.link} target="_blank" rel="noopener" className="block text-xs text-p-text/80 mt-0.5 hover:text-p-green">{item.text}</a> : <p className="text-xs text-p-text/80 mt-0.5">{item.text}</p>}
+                    </div>
+                </div>
+            </div>
+        );
+
+        const OsintPanel = () => {
+            const data = [
+                { time: 'NOW', src: 'DEFCON', text: 'OSINT Level 3. SOUTHCOM/INDOPACOM at Level 2.', level: 'elevated' },
+                { time: '1h', src: 'CENTCOM', text: 'US killed Al-Qaeda leader Syria Jan 16.', level: 'critical' },
+                { time: '2h', src: 'ISW', text: 'Russia gained 79 sq mi in 4 weeks.', level: 'critical' },
+                { time: '3h', src: 'HRANA', text: 'Iran deaths exceed 2,500. Executions ordered.', level: 'critical' },
+                { time: '4h', src: 'IAEA', text: 'Zaporizhzhia NPP ceasefire for repairs.', level: 'elevated' },
+                { time: '6h', src: 'NATO', text: 'Rutte-Zelenskyy call on energy crisis.', level: 'watch' },
+            ];
+            return (
+                <Panel title="📡 OSINT" badge="LIVE" color="red">
+                    <div className="space-y-1">{data.map((d,i) => <FeedItem key={i} item={d} />)}</div>
+                    <div className="flex gap-3 mt-3 pt-2 border-t border-p-border text-xs">
+                        <a href="https://defconlevel.com" target="_blank" className="text-p-cyan hover:underline">DEFCON →</a>
+                        <a href="https://understandingwar.org" target="_blank" className="text-p-cyan hover:underline">ISW →</a>
+                    </div>
+                </Panel>
+            );
+        };
+
+        const TwitterPanel = () => {
+            const ref = useRef(null);
+            useEffect(() => { if (window.twttr?.widgets) window.twttr.widgets.load(ref.current); }, []);
+            return (
+                <Panel title="𝕏 TWITTER" badge="LIVE" color="red">
+                    <div ref={ref}>
+                        <div className="bg-p-dark rounded overflow-hidden border border-p-border mb-3">
+                            <a className="twitter-timeline" data-theme="dark" data-height="320" data-chrome="noheader nofooter noborders transparent" data-tweet-limit="4" href="https://twitter.com/sentdefender">Loading tweets...</a>
+                        </div>
+                        <div className="bg-p-dark rounded p-2 border border-p-border">
+                            <div className="text-xs text-p-muted mb-2">OSINT ACCOUNTS</div>
+                            <div className="flex flex-wrap gap-1.5 text-xs">
+                                <a href="https://x.com/IntelCrab" target="_blank" className="px-2 py-1 bg-p-panel text-p-cyan rounded hover:bg-p-border">@IntelCrab</a>
+                                <a href="https://x.com/OSINTdefender" target="_blank" className="px-2 py-1 bg-p-panel text-p-cyan rounded hover:bg-p-border">@OSINTdefender</a>
+                                <a href="https://x.com/TheStudyofWar" target="_blank" className="px-2 py-1 bg-p-panel text-p-cyan rounded hover:bg-p-border">@TheStudyofWar</a>
+                                <a href="https://x.com/IranIntl_En" target="_blank" className="px-2 py-1 bg-p-panel text-p-cyan rounded hover:bg-p-border">@IranIntl_En</a>
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mt-2 text-xs">
+                            <a href="https://x.com/search?q=Ukraine&f=live" target="_blank" className="px-2 py-1 bg-p-critical/20 text-p-critical rounded">#Ukraine</a>
+                            <a href="https://x.com/search?q=Iran%20protests&f=live" target="_blank" className="px-2 py-1 bg-p-critical/20 text-p-critical rounded">#Iran</a>
+                            <a href="https://x.com/search?q=Gaza&f=live" target="_blank" className="px-2 py-1 bg-p-elevated/20 text-p-elevated rounded">#Gaza</a>
+                        </div>
+                    </div>
+                </Panel>
+            );
+        };
+
+        const NewsPanel = ({ title, url, src }) => {
+            const { items, loading } = useNews(url, src);
+            return (
+                <Panel title={title} badge={loading ? '...' : 'LIVE'}>
+                    {items.length > 0 ? <div className="space-y-1">{items.map((d,i) => <FeedItem key={i} item={d} />)}</div> : <p className="text-xs text-p-muted text-center py-4">{loading ? 'Loading...' : 'Feed unavailable'}</p>}
+                </Panel>
+            );
+        };
+
+        const PolymarketPanel = () => {
+            const data = usePolymarket();
+            return (
+                <Panel title="📊 POLYMARKET" badge="LIVE">
+                    <div className="space-y-2">
+                        {data.map((d, i) => {
+                            const c = d.p >= 50 ? '#ef4444' : d.p >= 25 ? '#f97316' : '#34c759';
+                            return (
+                                <div key={i} className="bg-p-dark rounded p-2 border border-p-border/50">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className="text-xs pr-2">{d.q}</span>
+                                        <span className="text-lg font-bold" style={{ color: c }}>{d.p}%</span>
+                                    </div>
+                                    <div className="h-1.5 bg-p-border rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full" style={{ width: `${d.p}%`, background: c }}></div>
+                                    </div>
+                                    <div className="text-xs text-p-muted mt-1">Vol: {d.v}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <a href="https://polymarket.com" target="_blank" className="block mt-3 pt-2 border-t border-p-border text-xs text-p-cyan hover:underline">All markets →</a>
+                </Panel>
+            );
+        };
+
+        const MarketsPanel = () => {
+            const data = [
+                ['S&P 500', '5,996', '+0.16%', true], ['NASDAQ', '19,630', '+0.14%', true],
+                ['VIX', '15.97', '-3.34%', false], ['GOLD', '$2,714', '+0.87%', true],
+                ['OIL', '$77.88', '+1.28%', true], ['BTC', '$103K', '+2.34%', true],
+            ];
+            return (
+                <Panel title="📈 MARKETS" badge="DATA">
+                    <div className="grid grid-cols-2 gap-2">
+                        {data.map(([n, v, c, up]) => (
+                            <div key={n} className="bg-p-dark rounded p-2 border border-p-border/50">
+                                <div className="text-xs text-p-muted">{n}</div>
+                                <div className="text-base font-bold">{v}</div>
+                                <div className="text-xs font-semibold" style={{ color: up ? '#34c759' : '#ef4444' }}>{c}</div>
+                            </div>
+                        ))}
+                    </div>
+                </Panel>
+            );
+        };
+
+        const App = () => {
+            const [time, setTime] = useState(fmtTime());
+            useEffect(() => { const t = setInterval(() => setTime(fmtTime()), 1000); return () => clearInterval(t); }, []);
+            
+            return (
+                <div className="min-h-screen bg-p-black">
+                    <Header time={time} />
+                    <DefconBar />
+                    <Ticker />
+                    <main className="p-3 max-w-[1920px] mx-auto">
+                        <section className="mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span>🌍</span>
+                                <span className="font-display font-semibold">GLOBAL SITUATION</span>
+                                <span className="px-2 py-0.5 bg-p-green/20 text-p-green text-xs rounded pulse">LIVE</span>
+                            </div>
+                            <Map />
+                        </section>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+                            <div className="space-y-3"><OsintPanel /><TwitterPanel /></div>
+                            <div className="space-y-3">
+                                <NewsPanel title="📰 BBC WORLD" url="https://feeds.bbci.co.uk/news/world/rss.xml" src="BBC" />
+                                <NewsPanel title="🌐 AL JAZEERA" url="https://www.aljazeera.com/xml/rss/all.xml" src="AJ" />
+                            </div>
+                            <div className="space-y-3"><PolymarketPanel /><MarketsPanel /></div>
+                        </div>
+                        <footer className="mt-6 pt-3 border-t border-p-border text-center text-xs text-p-muted">
+                            <p>PULSE v2.4 • OSINT Dashboard</p>
+                            <div className="flex justify-center gap-3 mt-1">
+                                <a href="https://defconlevel.com" target="_blank" className="text-p-cyan hover:underline">DEFCON</a>
+                                <a href="https://polymarket.com" target="_blank" className="text-p-cyan hover:underline">Polymarket</a>
+                                <a href="https://understandingwar.org" target="_blank" className="text-p-cyan hover:underline">ISW</a>
+                            </div>
+                        </footer>
+                    </main>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
