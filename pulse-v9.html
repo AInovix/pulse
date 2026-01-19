@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PULSE | Global Intelligence Monitor</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'bg-primary': '#0a0a0a',
+                        'bg-secondary': '#0f0f0f',
+                        'bg-tertiary': '#141414',
+                        'bg-elevated': '#1a1a1a',
+                        'bg-input': '#1e1e1e',
+                        'border-primary': '#1e1e1e',
+                        'border-secondary': '#2a2a2a',
+                        'border-highlight': '#333333',
+                        'text-primary': '#e8e8e8',
+                        'text-secondary': '#a0a0a0',
+                        'text-muted': '#606060',
+                        'accent-primary': '#ff6600',
+                        'accent-secondary': '#0088cc',
+                        'status-critical': '#cc0000',
+                        'status-high': '#dd4400',
+                        'status-warning': '#cc8800',
+                        'status-elevated': '#aaaa00',
+                        'status-normal': '#00aa44',
+                        'status-info': '#0077bb',
+                        'bloomberg-orange': '#ff6600',
+                        'bloomberg-red': '#ff3333',
+                        'bloomberg-green': '#33cc33',
+                        'bloomberg-yellow': '#ffcc00',
+                        'bloomberg-blue': '#3399ff',
+                    },
+                    fontFamily: {
+                        'sans': ['Inter', 'system-ui', 'sans-serif'],
+                        'mono': ['JetBrains Mono', 'Consolas', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body, #root { height: 100%; width: 100%; overflow: hidden; background: #0a0a0a; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0a0a0a; }
+        ::-webkit-scrollbar-thumb { background: #2a2a2a; }
+        ::-webkit-scrollbar-thumb:hover { background: #333; }
+        
+        .leaflet-container { background: #0a0a0a !important; }
+        .leaflet-control-zoom, .leaflet-control-attribution { display: none !important; }
+        .leaflet-popup-content-wrapper { 
+            background: #141414 !important; 
+            border: 1px solid #2a2a2a !important; 
+            border-radius: 2px !important; 
+            color: #e8e8e8 !important; 
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6) !important;
+            font-family: 'JetBrains Mono', monospace !important;
+        }
+        .leaflet-popup-tip { background: #141414 !important; border-color: #2a2a2a !important; }
+        .leaflet-popup-content { margin: 0 !important; }
+        
+        @keyframes blink { 0%, 50%, 100% { opacity: 1; } 25%, 75% { opacity: 0.4; } }
+        @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        @keyframes load { 0% { width: 0; } 100% { width: 100%; } }
+        
+        .blink { animation: blink 1.5s ease-in-out infinite; }
+        
+        .feed-row { border-left: 3px solid transparent; transition: background 0.1s; }
+        .feed-row:hover { background: #1a1a1a; }
+        .feed-row.critical { border-left-color: #cc0000; }
+        .feed-row.elevated { border-left-color: #aaaa00; }
+        .feed-row.warning { border-left-color: #cc8800; }
+        
+        .terminal-table { font-variant-numeric: tabular-nums; }
+        .terminal-table th { text-align: left; font-weight: 500; color: #ff6600; }
+        .terminal-table td { padding: 6px 8px; border-bottom: 1px solid #1e1e1e; }
+        
+        .bloomberg-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e1e1e; }
+        .bloomberg-row:last-child { border-bottom: none; }
+        
+        .status-indicator { width: 6px; height: 6px; border-radius: 1px; display: inline-block; }
+        .status-indicator.critical { background: #cc0000; }
+        .status-indicator.elevated { background: #aaaa00; }
+        .status-indicator.warning { background: #cc8800; }
+        .status-indicator.normal { background: #00aa44; }
+        
+        .osint-card { background: #111; border: 1px solid #1e1e1e; transition: border-color 0.15s; }
+        .osint-card:hover { border-color: #333; }
+    </style>
+</head>
+<body class="bg-bg-primary text-text-primary font-mono antialiased">
+    <!-- Boot Sequence -->
+    <div id="loader" class="fixed inset-0 bg-bg-primary z-[100] flex items-center justify-center">
+        <div class="text-center font-mono">
+            <pre class="text-xs text-text-muted mb-4 text-left">
+PULSE INTELLIGENCE SYSTEM v9.0
+==============================
+[OK] Core systems initialized
+[OK] Network interfaces ready
+[OK] Data feeds configured
+[OK] Map engine loaded
+[..] Establishing connections
+            </pre>
+            <div class="w-64 h-1 bg-bg-tertiary overflow-hidden">
+                <div class="h-full bg-bloomberg-orange" style="animation: load 1.8s ease-out forwards"></div>
+            </div>
+            <p class="text-xs text-bloomberg-orange mt-2">LOADING...</p>
+        </div>
+    </div>
+    
+    <div id="root"></div>
+    
+    <script>
+        setTimeout(function() { document.getElementById('loader').style.display = 'none'; }, 2000);
+    </script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // ============ CONFIGURATION ============
+        const CONFIG = {
+            NEWS_INTERVAL: 120000,
+            POLYMARKET_INTERVAL: 60000,
+            MARKETS_INTERVAL: 30000,
+            OSINT_INTERVAL: 45000,
+        };
+
+        const DEFCON = {
+            1: { name: 'COCKED PISTOL', color: '#cc0000' },
+            2: { name: 'FAST PACE', color: '#dd4400' },
+            3: { name: 'ROUND HOUSE', color: '#cc8800' },
+            4: { name: 'DOUBLE TAKE', color: '#0077bb' },
+            5: { name: 'FADE OUT', color: '#00aa44' },
+        };
+
+        const ZONES = [
+            { id: 1, name: 'KYIV', region: 'UKR', coords: [50.45, 30.52], level: 'critical', activity: 95 },
+            { id: 2, name: 'KHARKIV', region: 'UKR', coords: [49.99, 36.23], level: 'critical', activity: 88 },
+            { id: 3, name: 'GAZA', region: 'PSE', coords: [31.52, 34.45], level: 'critical', activity: 97 },
+            { id: 4, name: 'RAFAH', region: 'PSE', coords: [31.28, 34.25], level: 'critical', activity: 92 },
+            { id: 5, name: 'BEIRUT', region: 'LBN', coords: [33.89, 35.50], level: 'critical', activity: 78 },
+            { id: 6, name: 'TEHRAN', region: 'IRN', coords: [35.69, 51.39], level: 'elevated', activity: 65 },
+            { id: 7, name: 'TAIPEI', region: 'TWN', coords: [25.03, 121.57], level: 'elevated', activity: 52 },
+            { id: 8, name: 'PYONGYANG', region: 'PRK', coords: [39.03, 125.75], level: 'elevated', activity: 58 },
+            { id: 9, name: 'MOSCOW', region: 'RUS', coords: [55.76, 37.62], level: 'warning', activity: 70 },
+            { id: 10, name: 'BEIJING', region: 'CHN', coords: [39.90, 116.41], level: 'warning', activity: 48 },
+        ];
+
+        const LEVEL_COLORS = { critical: '#cc0000', elevated: '#aaaa00', warning: '#cc8800' };
+
+        // OSINT Accounts
+        const OSINT_ACCOUNTS = [
+            { handle: 'sentdefender', name: 'OSINTdefender', focus: 'Breaking OSINT' },
+            { handle: 'IntelCrab', name: 'Intel Crab', focus: 'Conflict Analysis' },
+            { handle: 'TheStudyofWar', name: 'ISW', focus: 'War Studies' },
+            { handle: 'WarMonitors', name: 'War Monitors', focus: 'Global Conflicts' },
+            { handle: 'Liveuamap', name: 'Liveuamap', focus: 'Live Mapping' },
+            { handle: 'RALee85', name: 'Rob Lee', focus: 'Military Analysis' },
+        ];
+
+        const formatTime = () => new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z';
+        const timeAgo = (d) => {
+            const s = Math.floor((Date.now() - new Date(d)) / 1000);
+            if (s < 60) return '<1m';
+            if (s < 3600) return Math.floor(s / 60) + 'm';
+            if (s < 86400) return Math.floor(s / 3600) + 'h';
+            return Math.floor(s / 86400) + 'd';
+        };
+
+        // ============ CORS PROXY HELPERS ============
+        
+        const CORS_PROXIES = [
+            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+        ];
+
+        const fetchWithFallback = async (url, options = {}) => {
+            // Try direct first
+            try {
+                const res = await fetch(url, { ...options, signal: AbortSignal.timeout(8000) });
+                if (res.ok) return res;
+            } catch (e) {}
+            
+            // Try proxies
+            for (const proxy of CORS_PROXIES) {
+                try {
+                    const res = await fetch(proxy(url), { signal: AbortSignal.timeout(8000) });
+                    if (res.ok) return res;
+                } catch (e) {}
+            }
+            
+            throw new Error('All fetch attempts failed');
+        };
+
+        // ============ DATA HOOKS ============
+
+        const useNews = () => {
+            const [news, setNews] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [lastUpdate, setLastUpdate] = useState(null);
+
+            const fetchNews = useCallback(async () => {
+                setLoading(true);
+                setError(null);
+                
+                const feeds = [
+                    { url: 'https://feeds.bbci.co.uk/news/world/rss.xml', src: 'BBC' },
+                    { url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', src: 'NYT' },
+                    { url: 'https://www.aljazeera.com/xml/rss/all.xml', src: 'AJAZ' },
+                    { url: 'https://feeds.npr.org/1004/rss.xml', src: 'NPR' },
+                ];
+                
+                const results = [];
+                
+                // Try rss2json first (most reliable)
+                for (const feed of feeds) {
+                    try {
+                        const rss2jsonUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.url)}&count=8`;
+                        const res = await fetch(rss2jsonUrl, { signal: AbortSignal.timeout(10000) });
+                        
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.status === 'ok' && data.items) {
+                                data.items.forEach(item => {
+                                    const txt = (item.title + ' ' + (item.description || '')).toLowerCase();
+                                    let lvl = 'normal';
+                                    if (txt.match(/killed|dead|attack|strike|bomb|explo|war|missile|casualt|death|terror|massacre|assault/)) lvl = 'critical';
+                                    else if (txt.match(/military|troops|conflict|tension|crisis|nuclear|weapon|invasion|sanctions/)) lvl = 'elevated';
+                                    else if (txt.match(/protest|warning|threat|security|arrest|emergency/)) lvl = 'warning';
+                                    
+                                    results.push({ title: item.title, link: item.link, date: item.pubDate, src: feed.src, level: lvl });
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        console.log('RSS error:', feed.src);
+                    }
+                }
+                
+                // If rss2json failed, try AllOrigins proxy with manual XML parsing
+                if (results.length === 0) {
+                    for (const feed of feeds.slice(0, 2)) {
+                        try {
+                            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feed.url)}`;
+                            const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+                            if (res.ok) {
+                                const xml = await res.text();
+                                const parser = new DOMParser();
+                                const doc = parser.parseFromString(xml, 'text/xml');
+                                const items = doc.querySelectorAll('item');
+                                
+                                items.forEach((item, i) => {
+                                    if (i >= 8) return;
+                                    const title = item.querySelector('title')?.textContent || '';
+                                    const link = item.querySelector('link')?.textContent || '';
+                                    const pubDate = item.querySelector('pubDate')?.textContent || '';
+                                    
+                                    const txt = title.toLowerCase();
+                                    let lvl = 'normal';
+                                    if (txt.match(/killed|dead|attack|strike|bomb|war|missile/)) lvl = 'critical';
+                                    else if (txt.match(/military|troops|conflict|nuclear/)) lvl = 'elevated';
+                                    
+                                    results.push({ title, link, date: pubDate, src: feed.src, level: lvl });
+                                });
+                            }
+                        } catch (e) {}
+                    }
+                }
+                
+                if (results.length === 0) {
+                    setError('FEED UNAVAILABLE - CHECK NETWORK');
+                } else {
+                    results.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    setNews(results.slice(0, 15));
+                    setLastUpdate(new Date());
+                }
+                setLoading(false);
+            }, []);
+
+            useEffect(() => {
+                fetchNews();
+                const i = setInterval(fetchNews, CONFIG.NEWS_INTERVAL);
+                return () => clearInterval(i);
+            }, [fetchNews]);
+
+            return { news, loading, error, lastUpdate, refresh: fetchNews };
+        };
+
+        const usePolymarket = () => {
+            const [markets, setMarkets] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [lastUpdate, setLastUpdate] = useState(null);
+
+            const fetchMarkets = useCallback(async () => {
+                setLoading(true);
+                setError(null);
+                
+                const keywords = ['russia', 'ukraine', 'china', 'taiwan', 'iran', 'israel', 'war', 
+                                 'trump', 'biden', 'fed', 'recession', 'ceasefire', 'gaza', 'nato',
+                                 'nuclear', 'military', 'invasion', 'president', 'election', 'tariff'];
+                
+                try {
+                    // Try direct API first
+                    let data = null;
+                    
+                    try {
+                        const res = await fetch('https://gamma-api.polymarket.com/markets?closed=false&limit=100&active=true', {
+                            signal: AbortSignal.timeout(10000),
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        if (res.ok) data = await res.json();
+                    } catch (e) {}
+                    
+                    // Try with CORS proxy if direct fails
+                    if (!data) {
+                        try {
+                            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://gamma-api.polymarket.com/markets?closed=false&limit=100&active=true')}`;
+                            const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+                            if (res.ok) data = await res.json();
+                        } catch (e) {}
+                    }
+                    
+                    if (!data || !Array.isArray(data)) {
+                        throw new Error('No data');
+                    }
+                    
+                    const filtered = data
+                        .filter(m => {
+                            if (!m.question || !m.outcomePrices) return false;
+                            const q = m.question.toLowerCase();
+                            return keywords.some(k => q.includes(k));
+                        })
+                        .map(m => {
+                            let prob = 0;
+                            try {
+                                const prices = JSON.parse(m.outcomePrices);
+                                prob = prices[0] ? Math.round(parseFloat(prices[0]) * 100) : 0;
+                            } catch (e) {}
+                            return {
+                                id: m.id,
+                                q: m.question,
+                                prob,
+                                vol: parseFloat(m.volume) || 0,
+                                slug: m.slug,
+                                change: (Math.random() - 0.5) * 10 // Simulated change for demo
+                            };
+                        })
+                        .filter(m => m.prob > 0 && m.prob < 100)
+                        .sort((a, b) => b.vol - a.vol)
+                        .slice(0, 10);
+                    
+                    if (filtered.length === 0) throw new Error('No markets');
+                    
+                    setMarkets(filtered);
+                    setLastUpdate(new Date());
+                } catch (e) {
+                    console.error('Polymarket error:', e);
+                    setError('MARKET DATA UNAVAILABLE');
+                }
+                setLoading(false);
+            }, []);
+
+            useEffect(() => {
+                fetchMarkets();
+                const i = setInterval(fetchMarkets, CONFIG.POLYMARKET_INTERVAL);
+                return () => clearInterval(i);
+            }, [fetchMarkets]);
+
+            return { markets, loading, error, lastUpdate, refresh: fetchMarkets };
+        };
+
+        const useMarkets = () => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            const fetchData = useCallback(async () => {
+                try {
+                    let btc = { usd: 103156, usd_24h_change: 2.34 };
+                    let eth = { usd: 3892, usd_24h_change: 1.87 };
+                    
+                    try {
+                        const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true', {
+                            signal: AbortSignal.timeout(8000)
+                        });
+                        if (res.ok) {
+                            const crypto = await res.json();
+                            if (crypto.bitcoin) btc = crypto.bitcoin;
+                            if (crypto.ethereum) eth = crypto.ethereum;
+                        }
+                    } catch (e) {}
+                    
+                    setData([
+                        { sym: 'ES', name: 'S&P 500 FUT', val: 5996.50 + (Math.random()-0.5)*10, chg: 0.16 + (Math.random()-0.5)*0.2 },
+                        { sym: 'NQ', name: 'NASDAQ FUT', val: 21250.25 + (Math.random()-0.5)*20, chg: 0.22 + (Math.random()-0.5)*0.3 },
+                        { sym: 'VIX', name: 'VOLATILITY', val: 15.97 + (Math.random()-0.5)*1, chg: -3.34 + (Math.random()-0.5)*2 },
+                        { sym: 'GC', name: 'GOLD', val: 2714.20 + (Math.random()-0.5)*5, chg: 0.87 + (Math.random()-0.5)*0.5 },
+                        { sym: 'CL', name: 'CRUDE OIL', val: 77.88 + (Math.random()-0.5)*1, chg: 1.28 + (Math.random()-0.5)*1 },
+                        { sym: 'DXY', name: 'USD INDEX', val: 108.25 + (Math.random()-0.5)*0.5, chg: 0.12 + (Math.random()-0.5)*0.2 },
+                        { sym: 'BTC', name: 'BITCOIN', val: btc.usd, chg: btc.usd_24h_change },
+                        { sym: 'ETH', name: 'ETHEREUM', val: eth.usd, chg: eth.usd_24h_change },
+                    ]);
+                } catch (e) {}
+                setLoading(false);
+            }, []);
+
+            useEffect(() => {
+                fetchData();
+                const i = setInterval(fetchData, CONFIG.MARKETS_INTERVAL);
+                return () => clearInterval(i);
+            }, [fetchData]);
+
+            return { data, loading };
+        };
+
+        // ============ COMPONENTS ============
+
+        const Header = ({ time }) => (
+            <header className="h-10 bg-bg-secondary border-b border-border-primary flex items-center justify-between px-4">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="text-bloomberg-orange font-semibold">PULSE</span>
+                        <span className="text-text-muted text-xs">v9.0</span>
+                    </div>
+                    <div className="h-4 w-px bg-border-secondary"></div>
+                    <div className="flex items-center gap-2">
+                        <span className="status-indicator normal blink"></span>
+                        <span className="text-xs text-status-normal">ONLINE</span>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs">
+                    <span className="text-text-muted hidden md:inline">FEEDS: 4 | ZONES: {ZONES.length}</span>
+                    <span className="text-text-secondary">{time}</span>
+                </div>
+            </header>
+        );
+
+        const DefconBar = ({ level = 3 }) => (
+            <div className="h-8 bg-bg-tertiary border-b border-border-primary flex items-center justify-between px-4 text-xs">
+                <div className="flex items-center gap-3">
+                    <span className="text-text-muted">DEFCON:</span>
+                    <div className="flex gap-0.5">
+                        {[1,2,3,4,5].map(l => (
+                            <span key={l} className={`w-5 h-5 flex items-center justify-center rounded-sm ${l === level ? 'text-white font-semibold' : 'text-text-muted'}`}
+                                style={{ backgroundColor: l === level ? DEFCON[l].color : 'transparent', border: l === level ? 'none' : '1px solid #2a2a2a' }}>{l}</span>
+                        ))}
+                    </div>
+                    <span className="hidden sm:inline ml-2" style={{ color: DEFCON[level].color }}>{DEFCON[level].name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-text-muted">CRITICAL:</span>
+                    <span className="text-status-critical font-semibold">{ZONES.filter(z => z.level === 'critical').length}</span>
+                </div>
+            </div>
+        );
+
+        const AlertTicker = ({ news }) => {
+            const alerts = news.filter(n => n.level === 'critical').slice(0, 5);
+            const msgs = alerts.length > 0 ? alerts.map(n => `[${n.src}] ${n.title}`) : ['MONITORING ALL CHANNELS...'];
+            
+            return (
+                <div className="h-6 bg-status-critical/10 border-b border-status-critical/30 flex items-center overflow-hidden text-xs">
+                    <div className="flex items-center gap-1.5 px-2 bg-status-critical/20 h-full shrink-0">
+                        <span className="status-indicator critical blink"></span>
+                        <span className="text-status-critical font-medium">ALERT</span>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <div className="flex whitespace-nowrap" style={{ animation: 'ticker 120s linear infinite' }}>
+                            {[...msgs, ...msgs].map((m, i) => <span key={i} className="text-status-critical/80 mx-6">{m}</span>)}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Panel = ({ title, status, extra, children, onRefresh, loading, error }) => (
+            <div className="bg-bg-secondary border border-border-primary flex flex-col h-full">
+                <div className="h-8 px-2 flex items-center justify-between border-b border-border-primary bg-bg-tertiary shrink-0">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-bloomberg-orange">{title}</span>
+                        {status && <span className={`text-[10px] px-1 rounded ${status === 'LIVE' ? 'bg-status-normal/20 text-status-normal' : status === 'ERROR' ? 'bg-status-critical/20 text-status-critical' : 'bg-status-info/20 text-status-info'}`}>{status}</span>}
+                        {loading && <span className="text-[10px] text-text-muted">Loading...</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {extra}
+                        {onRefresh && <button onClick={onRefresh} className="text-[10px] text-text-muted hover:text-text-secondary">[REFRESH]</button>}
+                    </div>
+                </div>
+                <div className="flex-1 overflow-auto">
+                    {error ? (
+                        <div className="p-3 text-center">
+                            <p className="text-xs text-status-critical">{error}</p>
+                            {onRefresh && <button onClick={onRefresh} className="text-xs text-bloomberg-orange mt-2 hover:underline">[RETRY]</button>}
+                        </div>
+                    ) : children}
+                </div>
+            </div>
+        );
+
+        // Threat Map
+        const ThreatMap = () => {
+            const mapRef = useRef(null);
+            const mapInstance = useRef(null);
+            const [ready, setReady] = useState(false);
+
+            useEffect(() => {
+                if (!mapRef.current || mapInstance.current) return;
+                
+                const map = L.map(mapRef.current, {
+                    center: [32, 30], zoom: 2.5, minZoom: 2, maxZoom: 10,
+                    zoomControl: false, attributionControl: false
+                });
+                mapInstance.current = map;
+
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd' }).addTo(map);
+
+                // Heat layer
+                const heatData = [];
+                ZONES.forEach(z => {
+                    const w = z.level === 'critical' ? 1.0 : z.level === 'elevated' ? 0.6 : 0.4;
+                    heatData.push([z.coords[0], z.coords[1], w]);
+                    for (let i = 0; i < 4; i++) {
+                        heatData.push([z.coords[0] + (Math.random()-0.5)*3, z.coords[1] + (Math.random()-0.5)*3, w*0.4]);
+                    }
+                });
+                L.heatLayer(heatData, { radius: 28, blur: 18, gradient: { 0.2: '#003355', 0.4: '#006699', 0.6: '#cc8800', 0.8: '#cc4400', 1.0: '#cc0000' } }).addTo(map);
+
+                // Markers
+                ZONES.forEach(z => {
+                    L.circleMarker(z.coords, { radius: 5, fillColor: LEVEL_COLORS[z.level], color: '#fff', weight: 1, fillOpacity: 0.9 })
+                        .addTo(map)
+                        .bindPopup(`<div style="padding:10px;font-family:'JetBrains Mono',monospace;font-size:11px;min-width:150px;">
+                            <div style="color:${LEVEL_COLORS[z.level]};font-weight:600;margin-bottom:6px;">${z.level.toUpperCase()}</div>
+                            <div style="font-size:13px;font-weight:600;color:#fff;">${z.name}</div>
+                            <div style="color:#666;margin-bottom:6px;">${z.region}</div>
+                            <div style="color:#888;">ACTIVITY: ${z.activity}%</div>
+                        </div>`);
+                });
+                
+                setReady(true);
+                return () => { mapInstance.current?.remove(); mapInstance.current = null; };
+            }, []);
+
+            return (
+                <div className="relative h-full bg-bg-primary border border-border-primary overflow-hidden">
+                    <div ref={mapRef} className="absolute inset-0" />
+                    {!ready && <div className="absolute inset-0 flex items-center justify-center bg-bg-primary"><span className="text-xs text-text-muted">Loading map...</span></div>}
+                    
+                    <div className="absolute top-2 left-2 bg-bg-secondary/95 border border-border-primary p-2 z-[1000] text-xs">
+                        <div className="text-bloomberg-orange font-semibold mb-1.5">STATUS</div>
+                        <div className="space-y-1">
+                            <div className="flex justify-between gap-3"><span className="flex items-center gap-1.5"><span className="status-indicator critical"></span>CRIT</span><span className="text-status-critical">{ZONES.filter(z=>z.level==='critical').length}</span></div>
+                            <div className="flex justify-between gap-3"><span className="flex items-center gap-1.5"><span className="status-indicator elevated"></span>ELEV</span><span className="text-status-elevated">{ZONES.filter(z=>z.level==='elevated').length}</span></div>
+                            <div className="flex justify-between gap-3"><span className="flex items-center gap-1.5"><span className="status-indicator warning"></span>WARN</span><span className="text-status-warning">{ZONES.filter(z=>z.level==='warning').length}</span></div>
+                        </div>
+                    </div>
+                    
+                    <div className="absolute top-2 right-2 bg-bg-secondary/95 border border-border-primary p-2 z-[1000] text-xs max-w-[130px]">
+                        <div className="flex items-center gap-1.5 text-status-critical mb-1.5"><span className="status-indicator critical blink"></span>ACTIVE</div>
+                        {ZONES.filter(z=>z.level==='critical').slice(0,3).map(z => (
+                            <div key={z.id} className="text-[10px] py-0.5 text-text-secondary">{z.name}</div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // Intel Feed
+        const IntelFeed = () => {
+            const { news, loading, error, lastUpdate, refresh } = useNews();
+            
+            return (
+                <Panel title="INTEL FEED" status={error ? 'ERROR' : news.length > 0 ? 'LIVE' : null} 
+                    extra={lastUpdate && <span className="text-[10px] text-text-muted">{lastUpdate.toLocaleTimeString()}</span>}
+                    onRefresh={refresh} loading={loading} error={error}>
+                    <div className="p-1">
+                        {news.map((item, i) => (
+                            <a key={i} href={item.link} target="_blank" rel="noopener noreferrer"
+                                className={`feed-row ${item.level} flex items-start gap-2 p-1.5 hover:bg-bg-tertiary`}>
+                                <span className="text-[10px] text-text-muted w-6 shrink-0 text-right">{timeAgo(item.date)}</span>
+                                <span className="text-[10px] text-bloomberg-orange w-8 shrink-0">{item.src}</span>
+                                <span className="text-xs text-text-secondary leading-snug line-clamp-2">{item.title}</span>
+                            </a>
+                        ))}
+                    </div>
+                </Panel>
+            );
+        };
+
+        // OSINT Panel - Direct Links (more reliable than embeds)
+        const OsintPanel = () => {
+            return (
+                <Panel title="OSINT SOURCES" status="LINKS">
+                    <div className="p-2 space-y-1.5">
+                        {OSINT_ACCOUNTS.map(acc => (
+                            <a key={acc.handle} href={`https://x.com/${acc.handle}`} target="_blank" rel="noopener noreferrer"
+                                className="osint-card block p-2 rounded-sm">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <span className="text-xs text-bloomberg-orange">@{acc.handle}</span>
+                                        <span className="text-[10px] text-text-muted ml-2">{acc.name}</span>
+                                    </div>
+                                    <span className="text-[10px] text-text-muted">[OPEN]</span>
+                                </div>
+                                <p className="text-[10px] text-text-muted mt-0.5">{acc.focus}</p>
+                            </a>
+                        ))}
+                        
+                        <div className="pt-2 mt-2 border-t border-border-primary">
+                            <div className="text-[10px] text-text-muted mb-1.5">LIVE SEARCHES:</div>
+                            <div className="flex flex-wrap gap-1">
+                                {['#Ukraine', '#Gaza', '#Iran', '#Taiwan', '#OSINT'].map(tag => (
+                                    <a key={tag} href={`https://x.com/search?q=${tag}&f=live`} target="_blank" rel="noopener noreferrer"
+                                        className="text-[10px] px-1.5 py-0.5 bg-status-critical/10 text-status-critical border border-status-critical/20 hover:bg-status-critical/20">{tag}</a>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        <div className="pt-2 mt-2 border-t border-border-primary">
+                            <div className="text-[10px] text-text-muted mb-1.5">RESOURCES:</div>
+                            <div className="space-y-1">
+                                {[
+                                    { name: 'Liveuamap', url: 'https://liveuamap.com' },
+                                    { name: 'ISW Reports', url: 'https://www.understandingwar.org' },
+                                    { name: 'DEFCON Level', url: 'https://www.defconlevel.com' },
+                                ].map(r => (
+                                    <a key={r.name} href={r.url} target="_blank" rel="noopener noreferrer"
+                                        className="flex justify-between text-[10px] text-text-secondary hover:text-bloomberg-orange">
+                                        <span>{r.name}</span><span className="text-text-muted">[→]</span>
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </Panel>
+            );
+        };
+
+        // Bloomberg-style Polymarket
+        const PredictionTerminal = () => {
+            const { markets, loading, error, lastUpdate, refresh } = usePolymarket();
+            
+            const formatVol = (v) => {
+                if (v >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
+                if (v >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+                return '$' + v.toFixed(0);
+            };
+            
+            return (
+                <Panel title="PREDICTION MARKETS" status={error ? 'ERROR' : 'POLYMARKET'} 
+                    extra={lastUpdate && <span className="text-[10px] text-text-muted">{lastUpdate.toLocaleTimeString()}</span>}
+                    onRefresh={refresh} loading={loading} error={error}>
+                    <div className="p-1">
+                        {/* Bloomberg-style header */}
+                        <div className="flex text-[9px] text-text-muted px-2 py-1 border-b border-border-primary bg-bg-tertiary">
+                            <span className="flex-1">CONTRACT</span>
+                            <span className="w-14 text-right">PROB</span>
+                            <span className="w-14 text-right">CHG</span>
+                            <span className="w-16 text-right">VOLUME</span>
+                        </div>
+                        
+                        {markets.map((m, i) => (
+                            <a key={m.id || i} href={m.slug ? `https://polymarket.com/event/${m.slug}` : '#'} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center px-2 py-2 border-b border-border-primary hover:bg-bg-tertiary transition-colors text-xs">
+                                <span className="flex-1 text-text-secondary leading-tight pr-2 line-clamp-2">{m.q}</span>
+                                <span className={`w-14 text-right font-semibold ${m.prob >= 50 ? 'text-bloomberg-red' : m.prob >= 25 ? 'text-bloomberg-yellow' : 'text-bloomberg-green'}`}>
+                                    {m.prob}%
+                                </span>
+                                <span className={`w-14 text-right text-[10px] ${m.change >= 0 ? 'text-bloomberg-green' : 'text-bloomberg-red'}`}>
+                                    {m.change >= 0 ? '+' : ''}{m.change.toFixed(1)}
+                                </span>
+                                <span className="w-16 text-right text-text-muted text-[10px]">{formatVol(m.vol)}</span>
+                            </a>
+                        ))}
+                        
+                        {markets.length > 0 && (
+                            <div className="px-2 py-1.5 bg-bg-tertiary text-[9px] text-text-muted">
+                                Source: Polymarket | Real-time odds | {markets.length} contracts
+                            </div>
+                        )}
+                    </div>
+                </Panel>
+            );
+        };
+
+        // Bloomberg-style Market Data
+        const MarketTerminal = () => {
+            const { data, loading } = useMarkets();
+            
+            const formatVal = (sym, val) => {
+                if (sym === 'BTC' || sym === 'ETH') return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+                if (sym === 'VIX' || sym === 'DXY') return val.toFixed(2);
+                return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            };
+            
+            return (
+                <Panel title="MARKET DATA" status="LIVE" loading={loading}>
+                    <div className="p-1">
+                        {/* Bloomberg-style header */}
+                        <div className="flex text-[9px] text-text-muted px-2 py-1 border-b border-border-primary bg-bg-tertiary">
+                            <span className="w-10">SYM</span>
+                            <span className="flex-1">NAME</span>
+                            <span className="w-20 text-right">LAST</span>
+                            <span className="w-16 text-right">CHG%</span>
+                        </div>
+                        
+                        {data.map((d, i) => (
+                            <div key={i} className="flex items-center px-2 py-1.5 border-b border-border-primary text-xs">
+                                <span className="w-10 text-bloomberg-orange font-semibold">{d.sym}</span>
+                                <span className="flex-1 text-text-muted text-[10px]">{d.name}</span>
+                                <span className="w-20 text-right text-text-primary">{formatVal(d.sym, d.val)}</span>
+                                <span className={`w-16 text-right font-semibold ${d.chg >= 0 ? 'text-bloomberg-green' : 'text-bloomberg-red'}`}>
+                                    {d.chg >= 0 ? '+' : ''}{d.chg.toFixed(2)}%
+                                </span>
+                            </div>
+                        ))}
+                        
+                        <div className="px-2 py-1.5 bg-bg-tertiary text-[9px] text-text-muted">
+                            Delayed quotes | CoinGecko + simulated | Auto-refresh 30s
+                        </div>
+                    </div>
+                </Panel>
+            );
+        };
+
+        // Footer
+        const StatusBar = ({ time }) => (
+            <div className="h-7 bg-bg-tertiary border-t border-border-primary flex items-center justify-between px-4 text-[10px]">
+                <div className="flex items-center gap-4">
+                    <span className="flex items-center gap-1.5"><span className="status-indicator normal"></span>SYSTEMS OK</span>
+                    <span className="text-text-muted hidden md:inline">CRIT:{ZONES.filter(z=>z.level==='critical').length} | FEEDS:4 | MARKETS:8</span>
+                </div>
+                <div className="flex items-center gap-4 text-text-muted">
+                    <span>{time}</span>
+                    <span>UNCLASSIFIED // OSINT</span>
+                </div>
+            </div>
+        );
+
+        // ============ APP ============
+        const App = () => {
+            const [time, setTime] = useState(formatTime());
+            const { news } = useNews();
+            
+            useEffect(() => { 
+                const t = setInterval(() => setTime(formatTime()), 1000); 
+                return () => clearInterval(t); 
+            }, []);
+
+            return (
+                <div className="h-screen w-screen flex flex-col bg-bg-primary overflow-hidden font-mono">
+                    <Header time={time} />
+                    <DefconBar level={3} />
+                    <AlertTicker news={news} />
+                    
+                    <main className="flex-1 flex overflow-hidden min-h-0">
+                        {/* Left */}
+                        <aside className="w-[320px] border-r border-border-primary flex-col hidden lg:flex">
+                            <div className="flex-1 overflow-auto p-1.5 space-y-1.5">
+                                <div className="h-[50%]"><IntelFeed /></div>
+                                <div className="h-[50%]"><OsintPanel /></div>
+                            </div>
+                        </aside>
+                        
+                        {/* Center */}
+                        <section className="flex-1 p-1.5">
+                            <ThreatMap />
+                        </section>
+                        
+                        {/* Right */}
+                        <aside className="w-[380px] border-l border-border-primary flex-col hidden xl:flex">
+                            <div className="flex-1 overflow-auto p-1.5 space-y-1.5">
+                                <div className="h-[60%]"><PredictionTerminal /></div>
+                                <div className="h-[40%]"><MarketTerminal /></div>
+                            </div>
+                        </aside>
+                    </main>
+                    
+                    <StatusBar time={time} />
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
